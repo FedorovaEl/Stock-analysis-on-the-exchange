@@ -8,16 +8,16 @@ ___
 ![Image](newplot.png)
 ___
 
-![Image](newplot (1).png)
+![Image](newplot1.png)
 ___
 
-![Image](newplot (2).png)
+![Image](newplot2.png)
 ___
 
-![Image](newplot (3).png)
+![Image](newplot3.png)
 ___
 
-![Image](newplot (4).png)
+![Image](newplot4.png)
 
 ___
 
