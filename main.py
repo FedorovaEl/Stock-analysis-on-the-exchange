@@ -1,21 +1,19 @@
-import sys
-import requests
-from datetime import datetime
-from io import StringIO
-from IPython.display import display
+import sys  # Системные параметры и функции
+from datetime import datetime, timedelta  # Работа с датами и временными промежутками
+from io import StringIO  # Введение/выведение данных в виде строк
 
-from loguru import logger
-
-import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.model_selection import TimeSeriesSplit
-from catboost import CatBoostRegressor
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-
-import matplotlib.pyplot as plt
-import plotly.graph_objects as go
-import plotly.express as px
+import numpy as np  # Научные вычисления и операции с массивами
+import optuna  # Библиотека для оптимизации гиперпараметров
+import pandas as pd  # Работа с данными в табличной форме
+import requests  # Отправка HTTP-запросов
+from PIL._imaging import display
+from catboost import CatBoostRegressor  # Модель CatBoost для регрессии
+from loguru import logger  # Логирование
+from matplotlib import pyplot as plt  # Построение графиков
+from plotly import express as px  # Создание интерактивных графиков
+from plotly import graph_objects as go  # Ещё возможности для интерактивных графиков
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score  # Метрики для оценки моделей
+from sklearn.model_selection import TimeSeriesSplit, train_test_split  # Методы для разбиения данных на тренировочные и тестовые выборки
 
 def setup_logging(log_file=None):
     """
@@ -52,22 +50,35 @@ def setup_logging(log_file=None):
 
 logger = setup_logging()
 
+# Нам нужны данные за последние четыре месяца.
+# В течение нескольких месяцев данные не поступают, но можно запросить их отдельно по месяцам и объединить в dataframe.
 
 class StockDataLoader:
+    """
+    Класс для загрузки и подготовки данных о ценах акций с использованием Alpha Vantage API.
+    """
+
     def __init__(self, api_key, base_url="https://www.alphavantage.co/query"):
+        """
+        Инициализация StockDataLoader.
+
+        Args:
+            api_key (str): API ключ для доступа к Alpha Vantage.
+            base_url (str, optional): Базовый URL для API запросов. По умолчанию "https://www.alphavantage.co/query".
+        """
         self.api_key = api_key
         self.base_url = base_url
 
     def _load_monthly_data(self, month, year):
         """
-        Loads stock data for a specific month using Alpha Vantage API.
+        Загрузка данных о ценах акций за конкретный месяц с использованием Alpha Vantage API.
 
         Args:
-          month (int): Month (1-12).
-          year (int): Year.
+            month (int): Месяц (1-12).
+            year (int): Год.
 
         Returns:
-          pd.DataFrame: DataFrame containing stock data or an empty DataFrame on error.
+            pd.DataFrame: DataFrame с данными о ценах акций или пустой DataFrame в случае ошибки.
         """
         month_str = f"0{month}" if month < 10 else month
         url = f"{self.base_url}?function=TIME_SERIES_INTRADAY&symbol=IBM&interval=60min&apikey={self.api_key}&datatype=csv&month={year}-{month_str}&outputsize=full"
@@ -88,13 +99,13 @@ class StockDataLoader:
 
     def load_and_prepare_data(self, months=5):
         """
-        Loads and prepares data for the past months.
+        Загрузка и подготовка данных за последние несколько месяцев.
 
         Args:
-          months (int, optional): Number of months of data to load. Defaults to 4.
+            months (int, optional): Количество месяцев для загрузки данных. По умолчанию 5.
 
         Returns:
-          pd.DataFrame: Prepared DataFrame containing the stock data.
+            pd.DataFrame: Подготовленный DataFrame с данными о ценах акций.
         """
         current_date = pd.to_datetime("today")
         data = pd.DataFrame()
@@ -110,35 +121,29 @@ class StockDataLoader:
             logger.info(f"Downloading data for month {month}/{year}")
 
             monthly_data = self._load_monthly_data(month, year)
-            display(monthly_data)
             data = pd.concat([data, monthly_data], ignore_index=True) if not monthly_data.empty else monthly_data
 
         if data.empty:
             logger.warning("No data downloaded for the specified period.")
             return data
 
-        # Data cleaning and feature engineering
+        # Очистка данных и генерация признаков
         data.drop_duplicates(inplace=True)
         data['timestamp'] = pd.to_datetime(data['timestamp'])
         data['hour_of_day'] = data['timestamp'].dt.hour
         logger.info("Data preparation complete, including cleaning and feature engineering.")
         return data
 
-api_key = "9PJCRGKTVAQXTFWH"
-stock_data_loader = StockDataLoader(api_key)
-data = stock_data_loader.load_and_prepare_data()
-
-data
 
 def load_preloaded_data(data_file):
     """
-    Loads and prepares stock data from a CSV file.
+    Загрузка и подготовка данных о ценах акций из CSV файла.
 
     Args:
-      data_file (str, optional): Path to the CSV file containing stock data. Defaults to "stock_data.csv".
+        data_file (str): Путь к CSV файлу с данными о ценах акций.
 
     Returns:
-      pd.DataFrame: Prepared DataFrame containing the stock data.
+        pd.DataFrame: Подготовленный DataFrame с данными о ценах акций.
     """
     try:
         data = (
@@ -156,10 +161,32 @@ def load_preloaded_data(data_file):
 
     return data
 
+def get_data(load_from_file=True, data_file="stock_data.csv", api_key="YOUR_API_KEY", months=5):
+    """
+    Получение данных о ценах акций путем загрузки из файла или скачивания через API.
 
-data = load_preloaded_data("stock_data.csv")
-data
+    Args:
+        load_from_file (bool, optional): Флаг для загрузки данных из файла. Если False, данные будут скачаны через API. По умолчанию True.
+        data_file (str, optional): Путь к файлу с данными. По умолчанию "stock_data.csv".
+        api_key (str, optional): API ключ для доступа к Alpha Vantage. По умолчанию "YOUR_API_KEY".
+        months (int, optional): Количество месяцев для загрузки данных через API. По умолчанию 5.
 
+    Returns:
+        pd.DataFrame: Подготовленные данные о ценах акций.
+    """
+    if load_from_file:
+        logger.info(f"Loading data from file: {data_file}")
+        return load_preloaded_data(data_file)
+    else:
+        logger.info(f"Downloading data using API key: {api_key}")
+        stock_data_loader = StockDataLoader(api_key)
+        return stock_data_loader.load_and_prepare_data(months)
+
+
+data = get_data(load_from_file=True, data_file="stock_data.csv", api_key="9PJCRGKTVAQXTFWH", months=5)
+display(data)
+
+# pd.DataFrame.to_csv(data, "stock_data_final.csv")
 
 def show_unique_hours_count(data):
     unique_hours_count = data['timestamp'].nunique()
@@ -187,8 +214,6 @@ def plot_hourly_dynamics(data):
 plot_hourly_dynamics(data)
 
 
-
-# Загрузка данных
 def plot_hourly_detailed(data):
     df = data.copy()
     df.set_index('timestamp', inplace=True)
@@ -201,7 +226,8 @@ def plot_hourly_detailed(data):
     fig_ma.add_trace(go.Scatter(x=df.index, y=df['close'], name='Цена закрытия'))
     fig_ma.add_trace(go.Scatter(x=df.index, y=df['SMA_7'], name='7-дневное SMA'))
     fig_ma.add_trace(go.Scatter(x=df.index, y=df['SMA_30'], name='30-дневное SMA'))
-    fig_ma.update_layout(title='Скользящие средние и цены закрытия', xaxis_title='Дата', yaxis_title='Цена', template='plotly_white')
+    fig_ma.update_layout(title='Скользящие средние и цены закрытия', xaxis_title='Дата', yaxis_title='Цена',
+                         template='plotly_white')
     fig_ma.show()
 
     # 2. Волатильность
@@ -209,102 +235,89 @@ def plot_hourly_detailed(data):
 
     fig_vol = go.Figure()
     fig_vol.add_trace(go.Scatter(x=df.index, y=df['Volatility'], name='Волатильность'))
-    fig_vol.update_layout(title='Волатильность цен закрытия', xaxis_title='Дата', yaxis_title='Волатильность', template='plotly_white')
+    fig_vol.update_layout(title='Волатильность цен закрытия', xaxis_title='Дата', yaxis_title='Волатильность',
+                          template='plotly_white')
     fig_vol.show()
 
     # 3. Объемы торгов
     fig_vol_trades = go.Figure()
     fig_vol_trades.add_trace(go.Bar(x=df.index, y=df['volume'], name='Объемы торгов'))
-    fig_vol_trades.update_layout(title='Объемы торгов', xaxis_title='Дата', yaxis_title='Объем', template='plotly_white')
+    fig_vol_trades.update_layout(title='Объемы торгов', xaxis_title='Дата', yaxis_title='Объем',
+                                 template='plotly_white')
     fig_vol_trades.show()
 
 
 plot_hourly_detailed(data)
 
+# Расширим функцию feature_engineering для добавления новых признаков:
+# День недели и день месяца – это может помочь уловить недельные и месячные паттерны в данных.
+# Лаговые признаки – предыдущие значения закрытия (close). Например, значение закрытия на один час назад.
+# Скользящие средние – например, скользящее среднее закрытия за последние 3 часа.
 
 int(len(data) * 0.8)
 
 int(len(data) * 0.2) // 24
 
+import streamlit as st
+
 
 class StockPricePredictor:
     """
     Класс для обучения и прогнозирования цен акций с помощью CatBoost.
-
-    Args:
-        data (pd.DataFrame): Исходные данные о ценах акций.
-        target_col (str, optional): Название столбца с целевой переменной (цена закрытия). По умолчанию 'close'.
-        test_size (float, optional): Доля данных, используемая для тестирования. По умолчанию 0.2.
-        model_params (dict, optional): Параметры CatBoostRegressor.
-                                       По умолчанию {'iterations': 100, 'learning_rate': 0.1, 'depth': 3}.
     """
 
     def __init__(self, data, target_col='close', test_size=0.2, model_params=None):
         """
         Инициализация класса StockPricePredictor.
-
-        Args:
-            data (pd.DataFrame): Исходные данные о ценах акций.
-            target_col (str, optional): Название столбца с целевой переменной (цена закрытия). По умолчанию 'close'.
-            test_size (float, optional): Доля данных, используемая для тестирования. По умолчанию 0.2.
-            model_params (dict, optional): Параметры CatBoostRegressor.
-                                       По умолчанию {'iterations': 100, 'learning_rate': 0.1, 'depth': 3}.
         """
         self.data = data
         self.target_col = target_col
         self.test_size = test_size
         self.model_params = model_params or {'iterations': 100, 'learning_rate': 0.1, 'depth': 3}
         self.model = CatBoostRegressor(**self.model_params)
+        self.prepare_and_split_data()
 
     def prepare_and_split_data(self):
         """
         Генерация признаков и разделение данных на обучающую и тестовую выборки.
         """
-        # Генерация всех признаков для всего датасета
-        full_features = generate_base_features(self.data)
+        self.data['timestamp'] = pd.to_datetime(self.data['timestamp'])
+        self.data.sort_values(by='timestamp', inplace=True)
 
-        # Объединение исходных данных с новыми признаками
-        full_data = pd.concat([self.data, full_features], axis=1)
-        display(full_data)
+        # Генерация признаков
+        full_data = self.data.copy()
+        full_data = generate_base_features(full_data)
 
-        # Разделение данных
+        # Разделение данных на тренировочные и тестовые без утечки данных
         train_size = int(len(full_data) * (1 - self.test_size))
-        train_data = full_data[:train_size]
-        test_data = full_data[train_size:]
+        train_data = full_data.iloc[:train_size].dropna()  # Убираем строки сy NaN значениями
+        test_data = full_data.iloc[train_size:].dropna()  # Убираем строки с NaN значениями
 
-        feature_cols = [col for col in train_data.columns if col not in [self.target_col, 'timestamp']]
-
-        self.X_train = train_data[feature_cols]
+        self.X_train = train_data.drop(columns=[self.target_col, 'timestamp'])
         self.y_train = train_data[self.target_col]
-        self.X_test = test_data[feature_cols]
+        self.X_test = test_data.drop(columns=[self.target_col, 'timestamp'])
         self.y_test = test_data[self.target_col]
+
+        logger.info("Данные успешно подготовлены и разделены на тренировочную и тестовую выборки.")
 
     def train(self):
         """
         Обучение модели CatBoostRegressor.
         """
         self.model.fit(self.X_train, self.y_train, silent=True)
+        logger.info("Модель успешно обучена.")
 
     def predict(self, X):
         """
         Предсказание цен акций на основе входных данных X.
-
-        Args:
-            X (pd.DataFrame): Данные для прогнозирования.
-
-        Returns:
-            numpy.ndarray: Массив прогнозируемых цен.
         """
         return self.model.predict(X)
 
     def evaluate(self):
         """
         Оценка качества модели на тестовых данных.
-
-        Returns:
-            dict: Словарь с метриками MSE, MAE и R^2.
         """
-        y_pred = self.model.predict(self.X_test)
+        y_pred = self.predict(self.X_test)
         mse = mean_squared_error(self.y_test, y_pred)
         mae = mean_absolute_error(self.y_test, y_pred)
         r2 = r2_score(self.y_test, y_pred)
@@ -312,45 +325,40 @@ class StockPricePredictor:
 
     def plot_results(self, title="Фактические против прогнозируемых цен"):
         """
-        Строит график фактических и прогнозируемых цен.
-
-        Args:
-            title (str, optional): Заголовок графика. По умолчанию "Фактические против прогнозируемых цен".
+        Построение графика фактических и прогнозируемых цен.
         """
-        # Предсказания на тренировочных данных
         train_predictions = self.predict(self.X_train)
-
-        # Предсказания на тестовых данных
         test_predictions = self.predict(self.X_test)
 
-        # График
         fig = go.Figure()
 
-        # Фактические данные
         fig.add_trace(go.Scatter(
             x=self.data['timestamp'][:len(self.X_train)],
             y=self.y_train,
             mode='lines',
             name='Фактические цены',
-            line=dict(color='blue')
+            line=dict(color='blue', width=2)  # Сделаем линии тоньше
         ))
 
-        # Предсказания на тренировочных данных
-        fig.add_trace(go.Scatter(
-            x=self.data['timestamp'][:len(self.X_train)],
-            y=train_predictions,
-            mode='lines',
-            name='Предсказания на тренировочных данных',
-            line=dict(color='green')
-        ))
+        # Добавление линий между фактическими и предсказанными значениями
+        for i in range(1, len(self.X_test)):
+            fig.add_trace(go.Scatter(
+                x=[self.data['timestamp'].iloc[len(self.X_train) + i - 1],
+                   self.data['timestamp'].iloc[len(self.X_train) + i]],
+                y=[self.y_test.iloc[i - 1], test_predictions[i]],
+                mode='lines',
+                line=dict(color='red', width=2),  # Сделаем линии тоньше
+                showlegend=False  # Скрыть из легенды
+            ))
 
-        # Предсказания на тестовых данных
+        # Добавление прогнозов на неделю вперед
+        future_predictions = self.predict_week_ahead()
         fig.add_trace(go.Scatter(
-            x=self.data['timestamp'][-len(self.X_test):],
-            y=test_predictions,
+            x=future_predictions['timestamp'],
+            y=future_predictions['predicted_close'],
             mode='lines',
-            name='Предсказания на тестовых данных',
-            line=dict(color='red')
+            name='Прогнозы на неделю вперед',
+            line=dict(color='orange', dash='dash')
         ))
 
         fig.update_layout(
@@ -363,44 +371,152 @@ class StockPricePredictor:
 
         fig.show()
 
+    def plot_zoomed_results(self, title="Фактические против прогнозируемых цен (увеличенный участок)"):
+        """
+        Построение графика фактических и прогнозируемых цен для последних нескольких недель.
+        """
+        zoom_weeks = 4  # Количество недель для увеличенного участка
+        zoom_data = self.data[self.data['timestamp'] >= self.data['timestamp'].max() - pd.Timedelta(weeks=zoom_weeks)]
+        zoom_y_test = self.y_test.iloc[-len(zoom_data):]
+        zoom_predictions = self.predict(self.X_test.iloc[-len(zoom_data):])
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=zoom_data['timestamp'],
+            y=zoom_y_test,
+            mode='lines',
+            name='Фактические цены',
+            line=dict(color='blue', width=2)  # Сделаем линии тоньше
+        ))
+
+        # Добавление линий между фактическими и предсказанными значениями
+        for i in range(1, len(zoom_y_test)):
+            fig.add_trace(go.Scatter(
+                x=[zoom_data['timestamp'].iloc[i - 1], zoom_data['timestamp'].iloc[i]],
+                y=[zoom_y_test.iloc[i - 1], zoom_predictions[i]],
+                mode='lines',
+                line=dict(color='red', width=2),  # Сделаем линии тоньше
+                showlegend=False  # Скрыть из легенды
+            ))
+
+        fig.update_layout(
+            title=title,
+            xaxis_title='Время',
+            yaxis_title='Цена',
+            legend_title='Легенда',
+            template='plotly_white'
+        )
+
+        fig.show()
+
+    def predict_week_ahead(self):
+        """
+        Прогноз на неделю вперед.
+        """
+        last_date = self.data['timestamp'].max()
+        future_dates = [last_date + timedelta(days=i) for i in range(1, 8)]
+        future_data = pd.DataFrame({'timestamp': future_dates})
+
+        # Добавляем значения 'close' для последней строки
+        future_data['close'] = np.nan
+        future_data = pd.concat([self.data, future_data], ignore_index=True)
+        future_data = generate_base_features(future_data)
+
+        # Удаляем строки с NaN
+        future_data = future_data.dropna().reset_index(drop=True)
+
+        future_data = future_data.iloc[-7:]
+        future_features = future_data.drop(columns=['close', 'timestamp'])
+        future_predictions = self.predict(future_features)
+
+        future_df = pd.DataFrame({'timestamp': future_dates, 'predicted_close': future_predictions})
+        logger.info("Прогнозы на неделю вперед успешно сгенерированы.")
+        return future_df
+
 
 def generate_base_features(data):
     """
-    Функция для генерации базовых признаков.
-    Создает словарь с новыми признаками:
-        day_of_week: День недели из timestamp.
-        day_of_month: День месяца из timestamp.
-        lag_close_1: Лаговая цена закрытия (сдвинутая на 1 период).
-    Заполняет пропуски в lag_close_1 методом bfill (заполнение назад).
+    Генерация базовых признаков.
+    """
+    data['day_of_week'] = data['timestamp'].dt.dayofweek
+    data['day_of_month'] = data['timestamp'].dt.day
+    data['lag_close_1'] = data['close'].shift(1)
+    data['rolling_mean_7'] = data['close'].shift(1).rolling(window=7).mean()  # Сдвигаем на 1 для предотвращения утечки
+    data['rolling_std_7'] = data['close'].shift(1).rolling(window=7).std()  # Сдвигаем на 1 для предотвращения утечки
+    data['rolling_mean_30'] = data['close'].shift(1).rolling(
+        window=30).mean()  # Сдвигаем на 1 для предотвращения утечки
+    data['rolling_std_30'] = data['close'].shift(1).rolling(window=30).std()  # Сдвигаем на 1 для предотвращения утечки
+    return data
+
+
+def objective(trial, data):
+    params = {
+        'iterations': trial.suggest_int('iterations', 500, 1500),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1),
+        'depth': trial.suggest_int('depth', 4, 6),
+        'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 10),
+        'border_count': trial.suggest_int('border_count', 32, 128),
+        'grow_policy': trial.suggest_categorical('grow_policy', ['SymmetricTree', 'Depthwise', 'Lossguide']),
+        'bootstrap_type': trial.suggest_categorical('bootstrap_type', ['Bayesian', 'Bernoulli', 'MVS']),
+        'random_strength': trial.suggest_float('random_strength', 0.5, 5)
+    }
+
+    if params['bootstrap_type'] == 'Bayesian':
+        params['bagging_temperature'] = trial.suggest_float('bagging_temperature', 0, 10)
+    elif params['bootstrap_type'] == 'Bernoulli':
+        params['subsample'] = trial.suggest_float('subsample', 0.5, 1.0)
+
+    model = CatBoostRegressor(**params, silent=True)
+    full_data = generate_base_features(data)
+    train_size = int(len(full_data) * 0.8)
+    train_data = full_data.iloc[:train_size]
+    test_data = full_data.iloc[train_size:]
+
+    X_train = train_data.drop(columns=['close', 'timestamp'])
+    y_train = train_data['close']
+    X_test = test_data.drop(columns=['close', 'timestamp'])
+    y_test = test_data['close']
+
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    mse = mean_squared_error(y_test, y_pred)
+    return mse
+
+
+def optimize_hyperparameters(data, n_trials):
+    study = optuna.create_study(direction='minimize')
+    study.optimize(lambda trial: objective(trial, data), n_trials=n_trials)
+    return study.best_params
+
+
+def evaluate_model(predictor):
+    """
+    Оценка модели.
 
     Args:
-        data (pd.DataFrame): Исходные данные.
+        predictor (StockPricePredictor): Экземпляр класса StockPricePredictor.
 
     Returns:
-        pd.DataFrame: DataFrame, созданный из словаря признаков..
+        dict: Результаты оценки модели.
     """
-    # Создаем словарь для новых признаков
-    features = {}
-    features['day_of_week'] = data['timestamp'].dt.dayofweek
-    features['day_of_month'] = data['timestamp'].dt.day
-    features['lag_close_1'] = data['close'].shift(1).fillna(method='bfill')
+    return predictor.evaluate()
 
-    # Возвращаем DataFrame, созданный из словаря признаков
-    return pd.DataFrame(features, index=data.index)
+# Оптимизация гиперпараметров
+best_params = optimize_hyperparameters(data, n_trials=500)
+best_params
 
-# Инициализируем и запускаем наш пайплайн
-predictor = StockPricePredictor(data)
-
-# Подготавливаем и разбиваем данные на обучающую и тестовую выборки
-predictor.prepare_and_split_data()
-
-# Обучаем модель CatBoostRegressor на обучающих данных
+# Инициализация и обучение модели
+predictor = StockPricePredictor(data, model_params=best_params)
+# predictor = StockPricePredictor(data)
 predictor.train()
 
-# Оцениваем качество модели на тестовых данных
-evaluation_results = predictor.evaluate()
-
-# Выводим результаты оценки
+# Оценка модели
+evaluation_results = evaluate_model(predictor)
 print(evaluation_results)
 
+# Визуализация результатов
 predictor.plot_results()
+
+# Визуализация увеличенного участка
+predictor.plot_zoomed_results()
